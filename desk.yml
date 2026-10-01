@@ -1,0 +1,16 @@
+http:
+  routers:
+    desk:
+      rule: "Host(`desk.xinjiyuan.tech`)"
+      priority: 1000
+      entryPoints:
+        - websecure
+      service: desk-service
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    desk-service:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8075"
