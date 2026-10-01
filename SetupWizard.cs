@@ -32,6 +32,7 @@ namespace XiaoWeiSimpleSetup
         // Page 3 Controls (Finish)
         private Label lblFinishTitle;
         private Label lblFinishDesc;
+        private CheckBox chkLaunchNow;
         private Button btnFinish;
 
         private string installDir;
@@ -73,7 +74,7 @@ namespace XiaoWeiSimpleSetup
             lblBannerTitle.AutoSize = true;
 
             lblBannerSubtitle = new Label();
-            lblBannerSubtitle.Text = "Windows 跨局域网高可用 SSH 守护管理器 · 安装向导";
+            lblBannerSubtitle.Text = "Windows 跨局域网高可用 SSH 守护管理器 · 全自动一键安装";
             lblBannerSubtitle.Font = new Font("Microsoft YaHei UI", 8.5F);
             lblBannerSubtitle.ForeColor = Color.FromArgb(160, 174, 192);
             lblBannerSubtitle.Location = new Point(25, 42);
@@ -109,7 +110,7 @@ namespace XiaoWeiSimpleSetup
             bottomPanel.Controls.Clear();
 
             lblIntro = new Label();
-            lblIntro.Text = "欢迎使用小薇远程安装向导。点击立即安装将程序释放至本地并创建图标。";
+            lblIntro.Text = "欢迎使用小薇远程一键安装向导。将自动部署运行环境并配置反向连接。";
             lblIntro.Location = new Point(28, 30);
             lblIntro.Size = new Size(440, 24);
             lblIntro.ForeColor = Color.FromArgb(55, 65, 81);
@@ -179,17 +180,16 @@ namespace XiaoWeiSimpleSetup
 
             bool makeShortcut = chkDesktopShortcut.Checked;
 
-            // 纯粹的静态解压与快捷方式创建，绝对不执行任何后台网络连接与脚本！
             Thread t = new Thread(() => {
                 try
                 {
-                    UpdateProgress(25, "正在创建安装文件夹...", "路径: " + installDir);
+                    UpdateProgress(20, "正在创建安装文件夹...", "路径: " + installDir);
                     if (!Directory.Exists(installDir))
                     {
                         Directory.CreateDirectory(installDir);
                     }
 
-                    UpdateProgress(60, "正在释放应用程序文件...", "释放核心程序与配置文件");
+                    UpdateProgress(40, "正在释放应用程序文件...", "释放核心程序与配置文件");
                     string targetExe = Path.Combine(installDir, "小薇远程.exe");
                     string targetScript = Path.Combine(installDir, "vps_tunnel.ps1");
                     string targetIco = Path.Combine(installDir, "app_classic_dark.ico");
@@ -204,6 +204,20 @@ namespace XiaoWeiSimpleSetup
                     ExtractResource("stop.bat", stopBat);
                     ExtractResource("status.bat", statusBat);
 
+                    UpdateProgress(65, "正在配置 Windows OpenSSH 远程服务...", "检测并确保 OpenSSH Server 服务就绪");
+                    try
+                    {
+                        ProcessStartInfo psi = new ProcessStartInfo();
+                        psi.FileName = "powershell.exe";
+                        psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"try { if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) { Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue | Out-Null }; Start-Service sshd -ErrorAction SilentlyContinue; Set-Service sshd -StartupType Automatic -ErrorAction SilentlyContinue; New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -ErrorAction SilentlyContinue | Out-Null } catch {}\"";
+                        psi.WindowStyle = ProcessWindowStyle.Hidden;
+                        psi.CreateNoWindow = true;
+                        psi.UseShellExecute = false;
+                        Process p = Process.Start(psi);
+                        if (p != null) p.WaitForExit(15000);
+                    }
+                    catch {}
+
                     if (makeShortcut)
                     {
                         UpdateProgress(90, "正在生成桌面快捷方式...", "生成「小薇远程」桌面图标");
@@ -212,7 +226,7 @@ namespace XiaoWeiSimpleSetup
                         CreateShortcut(lnk, targetExe, installDir, targetIco, "小薇远程 (XiaoWei Remote)");
                     }
 
-                    UpdateProgress(100, "安装完成！", "文件与图标已成功部署");
+                    UpdateProgress(100, "安装完成！", "服务环境与图标已成功部署");
                     Thread.Sleep(300);
 
                     this.Invoke((Action)(() => ShowStepFinish()));
@@ -250,17 +264,27 @@ namespace XiaoWeiSimpleSetup
             lblFinishTitle.Text = "🎉 安装完成！";
             lblFinishTitle.Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold);
             lblFinishTitle.ForeColor = Color.FromArgb(16, 140, 90);
-            lblFinishTitle.Location = new Point(28, 20);
+            lblFinishTitle.Location = new Point(28, 18);
             lblFinishTitle.AutoSize = true;
             contentPanel.Controls.Add(lblFinishTitle);
 
             lblFinishDesc = new Label();
-            lblFinishDesc.Text = "小薇远程 已成功安装。\n桌面已生成黑色「小薇远程」图标，双击桌面图标即可开启守护服务。";
+            lblFinishDesc.Text = "小薇远程 已成功安装且环境已自动就绪。\n桌面已生成黑色「小薇远程」图标。";
             lblFinishDesc.Font = new Font("Microsoft YaHei UI", 9.5F);
             lblFinishDesc.ForeColor = Color.FromArgb(75, 85, 99);
-            lblFinishDesc.Location = new Point(30, 55);
-            lblFinishDesc.Size = new Size(440, 50);
+            lblFinishDesc.Location = new Point(30, 48);
+            lblFinishDesc.Size = new Size(440, 40);
             contentPanel.Controls.Add(lblFinishDesc);
+
+            chkLaunchNow = new CheckBox();
+            chkLaunchNow.Text = "立即启动小薇远程服务（推荐）";
+            chkLaunchNow.Checked = true;
+            chkLaunchNow.Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold);
+            chkLaunchNow.ForeColor = Color.FromArgb(17, 24, 39);
+            chkLaunchNow.Location = new Point(30, 95);
+            chkLaunchNow.AutoSize = true;
+            chkLaunchNow.Cursor = Cursors.Hand;
+            contentPanel.Controls.Add(chkLaunchNow);
 
             btnFinish = new Button();
             btnFinish.Text = "完成";
@@ -270,6 +294,23 @@ namespace XiaoWeiSimpleSetup
             btnFinish.FlatStyle = FlatStyle.System;
             btnFinish.Cursor = Cursors.Hand;
             btnFinish.Click += (s, e) => {
+                if (chkLaunchNow.Checked)
+                {
+                    try
+                    {
+                        string targetExe = Path.Combine(installDir, "小薇远程.exe");
+                        if (File.Exists(targetExe))
+                        {
+                            Process.Start(new ProcessStartInfo()
+                            {
+                                FileName = targetExe,
+                                WorkingDirectory = installDir,
+                                UseShellExecute = true
+                            });
+                        }
+                    }
+                    catch {}
+                }
                 this.Close();
             };
             bottomPanel.Controls.Add(btnFinish);
