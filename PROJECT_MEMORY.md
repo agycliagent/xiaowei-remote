@@ -16,7 +16,7 @@
 
 ## 2. 基础设施与凭据配置
 
-- **目标 VPS**：`72.60.198.57`（root 用户，本地已配 `vps` 别名免密直连）。
+- **目标 VPS**：`72.60.198.57`（root 用户，本地已配置 SSH 公钥免密，直接执行 `ssh root@72.60.198.57` 或 `ssh vps` 免密直连，严禁向用户询问连接方式）。
 - **VPS 控制台工具**：`/usr/local/bin/win`（实时读取 `/root/.xiaowei/*.dev` 心跳，支持按编号免密直连任意 Windows 终端或全网广播 `win all <cmd>`）。
 - **分发站点与直链**：
   - 门户首页：`https://desk.xinjiyuan.tech/`

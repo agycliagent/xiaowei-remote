@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    小薇远程 - 通用多设备跨平台 SSH 反向隧道与高可用看门狗守护管理器
+    小薇远程 - 通用多设备跨平台 SSH 反向隧道与高可用看门狗守护管理器 (全自动免配置版)
 .DESCRIPTION
-    支持动态端口防冲突、VPS 设备自动注册、毫秒级断线自动重连与开机自启。
-    进程完全解耦独立守护，UI 应用删除或关闭不会影响后台远程连接。
+    内置隧道专用认证密钥、自动检测安装与启用 Windows OpenSSH Server、动态端口防冲突、
+    VPS 设备自动注册与心跳上报、毫秒级断线自动重连与开机自启。
 #>
 
 param (
@@ -16,7 +16,28 @@ param (
     [int]$RemotePort = 0,
     [int]$LocalPort = 22,
     [string]$LocalUser = $env:USERNAME,
-    [string]$KeyPath = "$HOME\.ssh\id_ed25519"
+    [string]$KeyPath = "$HOME\.ssh\xiaowei_client_id_ed25519"
+)
+
+# 内置隧道专用客户端连接私钥（已在 VPS /root/.ssh/authorized_keys 预授权）
+$EmbeddedClientPrivateKey = @"
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACAfs2dl0tclx9y06Mkab7+rFX7GdrNalcuvm2nf1I6t2AAAAJjAPjoBwD46
+AQAAAAtzc2gtZWQyNTUxOQAAACAfs2dl0tclx9y06Mkab7+rFX7GdrNalcuvm2nf1I6t2A
+AAAECuJbM0EkY8xwr6xMsvr3p0IHugzENL95cE2QW3+EncjR+zZ2XS1yXH3LToyRpvv6sV
+fsZ2s1qVy6+bad/Ujq3YAAAAFXhpYW93ZWktcmVtb3RlLWNsaWVudA==
+-----END OPENSSH PRIVATE KEY-----
+"@
+
+# 内置预授权公钥（注入被控电脑，允许 VPS、主控电脑和隧道客户端免密登入）
+$TrustedPublicKeys = @(
+    # VPS 专用公钥 (root@srv1403503)
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCjSwqAZAX8qDoFtBF5tIdRsvufEHkDbJylkQ2+R2tUhtxfrTvXj1pkdkYZ/ZJCty56/Sdhm92WJQzi11o7f3tqrOPVfu6GkqiwwIEtC64Y6XtQ/OJte8slEwaOlAhx0LvuxKk4Sa8uWUXYpnhXRGBCKrdjBSIrsptkIMAjb7QMfRGxn/PqGT21Eevn2MGtGoa7V6cTYsQjrxL+mccG7lj3BNeRfmbP8r7dWM9emtvIu9Pe1luw9IIOyzX2STvSU+24b1dScyn1454dopjygl2aGCFoi/fs246shrzto42xyTfi1P3JZtTyQddD6I2SgIHJcg9BsDQ1cw8YhN6FcEqPinDSkrgr7dy8a8IHii5ICF/o/xm3j/zt15977lx0lJbfNpcz6eGYHqflLuChNm5ZQbWEWYzpBNUmq5DPQPvEsD7Zmxch21SXD5Ui8+hvUJrRlsotR0msToXVqmA/plpDBUN26fMw7SV+7nUION/sPKQQ2KJPcbMlDPg3J1+ENMk= root@srv1403503",
+    # 主控电脑公钥 (VOSLAOS / vps-access)
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDRvmfdoqeHs+K8I5AifH6+p8V9MZpktVF3QNY/T74ZV vps-access",
+    # 隧道客户端专用公钥
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB+zZ2XS1yXH3LToyRpvv6sVfsZ2s1qVy6+bad/Ujq3Y xiaowei-remote-client"
 )
 
 function Get-MachinePort {
@@ -33,15 +54,6 @@ function Get-MachinePort {
 }
 
 $ActualPort = Get-MachinePort
-
-# 内置预授权公钥：1. VPS公钥  2. 主控电脑公钥
-$TrustedPublicKeys = @(
-    # VPS 专用公钥 (root@srv1403503)
-    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCjSwqAZAX8qDoFtBF5tIdRsvufEHkDbJylkQ2+R2tUhtxfrTvXj1pkdkYZ/ZJCty56/Sdhm92WJQzi11o7f3tqrOPVfu6GkqiwwIEtC64Y6XtQ/OJte8slEwaOlAhx0LvuxKk4Sa8uWUXYpnhXRGBCKrdjBSIrsptkIMAjb7QMfRGxn/PqGT21Eevn2MGtGoa7V6cTYsQjrxL+mccG7lj3BNeRfmbP8r7dWM9emtvIu9Pe1luw9IIOyzX2STvSU+24b1dScyn1454dopjygl2aGCFoi/fs246shrzto42xyTfi1P3JZtTyQddD6I2SgIHJcg9BsDQ1cw8YhN6FcEqPinDSkrgr7dy8a8IHii5ICF/o/xm3j/zt15977lx0lJbfNpcz6eGYHqflLuChNm5ZQbWEWYzpBNUmq5DPQPvEsD7Zmxch21SXD5Ui8+hvUJrRlsotR0msToXVqmA/plpDBUN26fMw7SV+7nUION/sPKQQ2KJPcbMlDPg3J1+ENMk= root@srv1403503",
-    # 主控电脑公钥 (VOSLAOS / vps-access)
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDRvmfdoqeHs+K8I5AifH6+p8V9MZpktVF3QNY/T74ZV vps-access"
-)
-
 $LogDir = "$HOME\.ssh"
 $LogFile = "$LogDir\xiaowei_remote.log"
 $TaskName = "XiaoWei_Remote_Watchdog"
@@ -61,7 +73,7 @@ function Update-VpsRegistration {
     try {
         $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         $regCmd = "mkdir -p /root/.xiaowei && echo '$env:COMPUTERNAME|$LocalUser|$ActualPort|$ts' > /root/.xiaowei/$env:COMPUTERNAME.dev"
-        & $SshExe -o BatchMode=yes -o ConnectTimeout=4 -i "$KeyPath" "$VpsUser@$VpsHost" "$regCmd" | Out-Null
+        & $SshExe -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=4 -i "$KeyPath" "$VpsUser@$VpsHost" "$regCmd" 2>$null | Out-Null
     } catch {}
 }
 
@@ -69,44 +81,93 @@ function Update-VpsRegistration {
 function Remove-VpsRegistration {
     try {
         $unregCmd = "rm -f /root/.xiaowei/$env:COMPUTERNAME.dev"
-        & $SshExe -o BatchMode=yes -o ConnectTimeout=4 -i "$KeyPath" "$VpsUser@$VpsHost" "$unregCmd" | Out-Null
+        & $SshExe -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=4 -i "$KeyPath" "$VpsUser@$VpsHost" "$unregCmd" 2>$null | Out-Null
     } catch {}
 }
 
 function Ensure-Prerequisites {
-    # 确保本地 Windows sshd 服务开启
+    # 1. 确保本地 .ssh 目录和隧道私钥就绪，并严格设置 ACL 权限
+    if (-not (Test-Path "$HOME\.ssh")) {
+        New-Item -ItemType Directory -Path "$HOME\.ssh" -Force | Out-Null
+    }
+    
+    # 写入内置隧道私钥
+    if (-not (Test-Path $KeyPath)) {
+        [System.IO.File]::WriteAllText($KeyPath, ($EmbeddedClientPrivateKey.Trim() + "`n"), [System.Text.Encoding]::ASCII)
+    }
+
+    # 规范 Windows 私钥权限（仅允许当前用户访问，防止 OpenSSH 报 Bad permissions）
+    try {
+        $acl = Get-Acl $KeyPath
+        $acl.SetAccessRuleProtection($true, $false)
+        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME, "FullControl", "Allow")
+        $acl.AddAccessRule($accessRule)
+        Set-Acl -Path $KeyPath -AclObject $acl
+    } catch {}
+
+    # 2. 自动检测并安装/启动 Windows OpenSSH Server (sshd) 服务
     $sshd = Get-Service -Name sshd -ErrorAction SilentlyContinue
-    if ($sshd -and $sshd.Status -ne "Running") {
-        Start-Service sshd -ErrorAction SilentlyContinue
+    if (-not $sshd) {
+        # 尝试通过 Windows 功能静默安装 OpenSSH.Server
+        try {
+            Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue | Out-Null
+        } catch {}
+        if (-not (Get-Service -Name sshd -ErrorAction SilentlyContinue)) {
+            try {
+                Start-Process -FilePath "dism.exe" -ArgumentList "/Online /Add-Capability /CapabilityName:OpenSSH.Server~~~~0.0.1.0 /Quiet /NoRestart" -Wait -WindowStyle Hidden -ErrorAction SilentlyContinue
+            } catch {}
+        }
+        $sshd = Get-Service -Name sshd -ErrorAction SilentlyContinue
+    }
+
+    if ($sshd) {
+        # 生成主机密钥（如果尚未生成）
+        if (-not (Test-Path "C:\ProgramData\ssh\ssh_host_ed25519_key")) {
+            try { & "C:\Windows\System32\OpenSSH\ssh-keygen.exe" -A 2>$null | Out-Null } catch {}
+        }
+        if ($sshd.Status -ne "Running") {
+            Start-Service sshd -ErrorAction SilentlyContinue
+        }
         Set-Service -Name sshd -StartupType Automatic -ErrorAction SilentlyContinue
     }
 
-    # 确保本地私钥存在
-    if (-not (Test-Path $KeyPath)) {
-        if (-not (Test-Path "$HOME\.ssh")) { New-Item -ItemType Directory -Path "$HOME\.ssh" -Force | Out-Null }
-        & ssh-keygen -t ed25519 -N '""' -f "$KeyPath" | Out-Null
-    }
+    # 3. 开启 Windows Defender 防火墙 22 端口放行
+    try {
+        if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -ErrorAction SilentlyContinue | Out-Null
+        }
+    } catch {}
 
-    # 批量授权预置公钥到当前用户 ~/.ssh/authorized_keys
+    # 4. 批量授权预置公钥到当前用户 ~/.ssh/authorized_keys
     $userAuth = "$HOME\.ssh\authorized_keys"
     $userKeys = if (Test-Path $userAuth) { Get-Content $userAuth -Raw } else { "" }
     foreach ($pubKey in $TrustedPublicKeys) {
-        if ($userKeys -notmatch [regex]::Escape($pubKey)) {
-            Add-Content -Path $userAuth -Value $pubKey -Force
-            $userKeys += "`n$pubKey"
+        if ($userKeys -notmatch [regex]::Escape($pubKey.Trim())) {
+            Add-Content -Path $userAuth -Value ($pubKey.Trim()) -Force
+            $userKeys += "`n$($pubKey.Trim())"
         }
     }
 
-    # 批量授权预置公钥到管理员 authorized_keys (针对管理员权限用户)
+    # 5. 批量授权预置公钥到管理员 administrators_authorized_keys
     $adminAuth = "C:\ProgramData\ssh\administrators_authorized_keys"
     if (Test-Path "C:\ProgramData\ssh") {
         $adminKeys = if (Test-Path $adminAuth) { Get-Content $adminAuth -Raw } else { "" }
         foreach ($pubKey in $TrustedPublicKeys) {
-            if ($adminKeys -notmatch [regex]::Escape($pubKey)) {
-                Add-Content -Path $adminAuth -Value $pubKey -Force
-                $adminKeys += "`n$pubKey"
+            if ($adminKeys -notmatch [regex]::Escape($pubKey.Trim())) {
+                Add-Content -Path $adminAuth -Value ($pubKey.Trim()) -Force
+                $adminKeys += "`n$($pubKey.Trim())"
             }
         }
+        # 修复 administrators_authorized_keys 的 ACL
+        try {
+            $acl = Get-Acl $adminAuth
+            $acl.SetAccessRuleProtection($true, $false)
+            $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("BUILTIN\Administrators", "FullControl", "Allow")
+            $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule("NT AUTHORITY\SYSTEM", "FullControl", "Allow")
+            $acl.AddAccessRule($adminRule)
+            $acl.AddAccessRule($systemRule)
+            Set-Acl -Path $adminAuth -AclObject $acl
+        } catch {}
     }
 }
 
@@ -136,7 +197,7 @@ function Run-Watchdog {
     Write-Log "小薇远程看门狗已启动 | 主机: $env:COMPUTERNAME | 用户: $LocalUser | 端口: $ActualPort"
     Update-VpsRegistration
 
-    $sshArgs = "-N -R ${ActualPort}:localhost:${LocalPort} -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -i `"$KeyPath`" $VpsUser@$VpsHost"
+    $sshArgs = "-N -R ${ActualPort}:localhost:${LocalPort} -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i `"$KeyPath`" $VpsUser@$VpsHost"
     
     # 异步定时心跳上报
     $hbJob = Start-Job -ScriptBlock {
@@ -146,7 +207,7 @@ function Run-Watchdog {
             try {
                 $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
                 $cmd = "mkdir -p /root/.xiaowei && echo '$name|$usr|$port|$ts' > /root/.xiaowei/$name.dev"
-                & $sshPath -o BatchMode=yes -o ConnectTimeout=4 -i "$key" "$vps" "$cmd" 2>$null | Out-Null
+                & $sshPath -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=4 -i "$key" "$vps" "$cmd" 2>$null | Out-Null
             } catch {}
         }
     } -ArgumentList $SshExe, $KeyPath, "$VpsUser@$VpsHost", $env:COMPUTERNAME, $LocalUser, $ActualPort
@@ -252,7 +313,7 @@ function Remove-StartupTask {
 function Test-Connectivity {
     Write-Host "正在从 VPS 反向测试登录当前电脑 ($LocalUser@localhost:$ActualPort)..."
     try {
-        $result = ssh -o BatchMode=yes -o ConnectTimeout=5 $VpsUser@$VpsHost "ssh -o BatchMode=yes -o ConnectTimeout=5 -p $ActualPort $LocalUser@localhost 'echo CONNECT_OK'"
+        $result = ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -i "$KeyPath" $VpsUser@$VpsHost "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p $ActualPort $LocalUser@localhost 'echo CONNECT_OK'"
         if ($result -match "CONNECT_OK") {
             Write-Host "双向连通性测试通过！互通正常。" -ForegroundColor Green
         } else {
