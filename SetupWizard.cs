@@ -196,6 +196,7 @@ namespace XiaoWeiSimpleSetup
                     string startBat = Path.Combine(installDir, "start.bat");
                     string stopBat = Path.Combine(installDir, "stop.bat");
                     string statusBat = Path.Combine(installDir, "status.bat");
+                    string sshZip = Path.Combine(installDir, "OpenSSH-Win64.zip");
 
                     ExtractResource("小薇远程.exe", targetExe);
                     ExtractResource("vps_tunnel.ps1", targetScript);
@@ -203,6 +204,7 @@ namespace XiaoWeiSimpleSetup
                     ExtractResource("start.bat", startBat);
                     ExtractResource("stop.bat", stopBat);
                     ExtractResource("status.bat", statusBat);
+                    ExtractResource("OpenSSH-Win64.zip", sshZip);
 
                     UpdateProgress(65, "正在配置 Windows OpenSSH 远程服务...", "检测并确保 OpenSSH Server 服务就绪");
                     try
