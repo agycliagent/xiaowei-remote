@@ -39,6 +39,7 @@
 | **坑 4** | 安装包被系统 Defender / 安全机制拦截 | 安装向导在解压释放过程中直接调用 PowerShell 启动后台外联与任务 | **解压、安装、运行三阶段彻底解耦**：安装包仅纯静态写文件和创建快捷方式，退出向导后，用户亲自双击桌面图标才启动守护 |
 | **坑 5** | 启动器虚假提示与 LOLBIN 高危特征 | 空 try-catch 吞掉异常；直接向 powershell 传 `-WindowStyle Hidden -ExecutionPolicy Bypass` | C# ProcessStartInfo 封装无窗口调用，做真实进程存活性校验，失败红点/成功绿点 |
 | **坑 6** | 开机自启在普通权限下静默失效 | `Register-ScheduledTask` 需要管理员权限，普通用户运行时失败 | **双模自适应**：Admin 走 Task Scheduler，普通用户走 HKCU Run 注册表，0 弹窗 100% 成功 |
+| **坑 7** | 新电脑安装后无法连入与上报 | 原生 Windows 缺少 OpenSSH Server 且新机随机公钥未在 VPS 授权 | **内置统一隧道专用私钥**（VPS 预授权）+ 启动脚本自动检测并静默安装启用 OpenSSH Server 服务端 |
 
 ---
 
