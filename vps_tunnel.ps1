@@ -40,6 +40,15 @@ $TrustedPublicKeys = @(
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB+zZ2XS1yXH3LToyRpvv6sVfsZ2s1qVy6+bad/Ujq3Y xiaowei-remote-client"
 )
 
+function Get-SshExePath {
+    if (Test-Path "C:\Windows\System32\OpenSSH\ssh.exe") { return "C:\Windows\System32\OpenSSH\ssh.exe" }
+    $cmd = Get-Command "ssh.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return "C:\Windows\System32\OpenSSH\ssh.exe"
+}
+
+$SshExe = Get-SshExePath
+
 function Get-MachinePort {
     if ($RemotePort -gt 0) { return $RemotePort }
     $configPath = "$PSScriptRoot\config.json"
@@ -57,7 +66,6 @@ $ActualPort = Get-MachinePort
 $LogDir = "$HOME\.ssh"
 $LogFile = "$LogDir\xiaowei_remote.log"
 $TaskName = "XiaoWei_Remote_Watchdog"
-$SshExe = "C:\Windows\System32\OpenSSH\ssh.exe"
 
 function Write-Log {
     param([string]$Message)
@@ -105,10 +113,13 @@ function Ensure-Prerequisites {
         Set-Acl -Path $KeyPath -AclObject $acl
     } catch {}
 
-    # 2. 自动检测并安装/启动 Windows OpenSSH Server (sshd) 服务
+    # 2. 自动检测并安装/启动 Windows OpenSSH Server (sshd) 与 Client (ssh)
+    if (-not (Test-Path $SshExe)) {
+        try { Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 -ErrorAction SilentlyContinue | Out-Null } catch {}
+    }
+
     $sshd = Get-Service -Name sshd -ErrorAction SilentlyContinue
     if (-not $sshd) {
-        # 尝试通过 Windows 功能静默安装 OpenSSH.Server
         try {
             Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -ErrorAction SilentlyContinue | Out-Null
         } catch {}
@@ -121,7 +132,6 @@ function Ensure-Prerequisites {
     }
 
     if ($sshd) {
-        # 生成主机密钥（如果尚未生成）
         if (-not (Test-Path "C:\ProgramData\ssh\ssh_host_ed25519_key")) {
             try { & "C:\Windows\System32\OpenSSH\ssh-keygen.exe" -A 2>$null | Out-Null } catch {}
         }
@@ -158,7 +168,6 @@ function Ensure-Prerequisites {
                 $adminKeys += "`n$($pubKey.Trim())"
             }
         }
-        # 修复 administrators_authorized_keys 的 ACL
         try {
             $acl = Get-Acl $adminAuth
             $acl.SetAccessRuleProtection($true, $false)
@@ -197,7 +206,18 @@ function Run-Watchdog {
     Write-Log "小薇远程看门狗已启动 | 主机: $env:COMPUTERNAME | 用户: $LocalUser | 端口: $ActualPort"
     Update-VpsRegistration
 
-    $sshArgs = "-N -R ${ActualPort}:localhost:${LocalPort} -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i `"$KeyPath`" $VpsUser@$VpsHost"
+    $tunnelArgs = @(
+        "-N",
+        "-R", "${ActualPort}:localhost:${LocalPort}",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "ExitOnForwardFailure=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR",
+        "-i", "$KeyPath",
+        "$VpsUser@$VpsHost"
+    )
     
     # 异步定时心跳上报
     $hbJob = Start-Job -ScriptBlock {
@@ -217,7 +237,7 @@ function Run-Watchdog {
         try {
             Update-VpsRegistration
             Write-Log "正在建立 SSH 反向隧道 (端口 $ActualPort)..."
-            $process = Start-Process -FilePath $SshExe -ArgumentList $sshArgs -PassThru -NoNewWindow -Wait
+            $process = Start-Process -FilePath $SshExe -ArgumentList $tunnelArgs -PassThru -NoNewWindow -Wait
             Write-Log "SSH 隧道已断开 (退出码: $($process.ExitCode))，5 秒后尝试重新连接..."
         }
         catch {
