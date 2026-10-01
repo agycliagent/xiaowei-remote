@@ -215,26 +215,38 @@ function Set-StartupTask {
     param([bool]$Silent = $false)
     Ensure-Prerequisites
     $scriptPath = $PSCommandPath
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -Action Watchdog -RemotePort $ActualPort"
-    
-    $trigger = New-ScheduledTaskTrigger -AtStartup
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
-    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType S4U -RunLevel Highest
+    $regKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $regName = "XiaoWei_Remote"
+    $regValue = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -Action Watchdog -RemotePort $ActualPort"
 
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-    if (-not $Silent) {
-        Write-Host "成功注册开机自启任务: $TaskName (端口: $ActualPort)"
+    # 1. 尝试以管理员身份注册计划任务
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        try {
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+                -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -Action Watchdog -RemotePort $ActualPort"
+            $trigger = New-ScheduledTaskTrigger -AtStartup
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+            $principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType S4U -RunLevel Highest
+            Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+            if (-not $Silent) { Write-Host "成功注册系统级开机自启任务: $TaskName" }
+            return
+        } catch {}
     }
+
+    # 2. 普通用户权限：静默注册当前用户注册表自启（100% 成功且 0 弹窗）
+    try {
+        Set-ItemProperty -Path $regKey -Name $regName -Value $regValue -Force | Out-Null
+        if (-not $Silent) { Write-Host "成功注册用户级开机自启 (HKCU Run): $regName" }
+    } catch {}
 }
 
 function Remove-StartupTask {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-        Write-Host "已注销开机自启任务: $TaskName"
-    } else {
-        Write-Host "开机自启任务未配置或已注销。"
     }
+    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "XiaoWei_Remote" -ErrorAction SilentlyContinue
+    Write-Host "已注销开机自启配置。"
 }
 
 function Test-Connectivity {
